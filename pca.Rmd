@@ -1,0 +1,251 @@
+---
+title: "Misinformation Spread COVID19"
+author: "Sree Kanagala"
+output:
+  html_document:
+    df_print: paged
+---
+Dataset: [Harvard Dataset](https://doi.org/10.7910/DVN/TIN0SK) <br> <br> <br>
+
+### Data Cleaning 
+Load in dataset and create a variable for  
+```{r}
+library(readxl)
+harvard <- read_excel("C:/Users/ksree/Desktop/senior year/comp_app/harvard.xlsx", 
+                      sheet = "Sheet16")
+View(harvard)
+
+data <- cbind(harvard)
+```
+<br> <br> <br> Remove binary answers to statements 1-12 for trust and sharing (I use the average per participant for these variables)
+```{r}
+data = subset(data, select = -c(No, FNtrust1,FNtrust2,FNtrust3,FNtrust4,FNtrust5,FNtrust6,FNtrust7,FNtrust8,
+                                FNtrust9,FNtrust10,FNtrust11,FNtrust12,FNtrust13,  FNsharing1,FNsharing2,FNsharing3,FNsharing4,FNsharing5,
+                                FNsharing6,FNsharing7,FNsharing8,FNsharing9,FNsharing10,FNsharing11,FNsharing12, FNsharing13))
+```
+
+<br> <br> <br>
+Profile data to see any immediate anomalies and check variables 
+```{r}
+View(data)
+```
+
+<br> <br> <br>
+Needed packages 
+```{r}
+library(faraway)
+library(psych)
+```
+
+### Descriptive Statistics 
+Get some descriptive statistics for the overall dataset
+Identify any visual correlations among variables, visual outliers, mean and skew
+```{r}
+plot(data)
+summary(data)
+describe(data)
+```
+
+<br> <br> <br>
+Create a visual for the correlations existing among variables through a correlation plot
+Correlations are not as high as hypothesized 
+```{r}
+library(GGally)
+ggcorr(data, method = c("everything", "pearson")) 
+```
+
+### Split Training and Test data
+Split data into training and test sets to validate model in the end 
+```{r}
+require(caTools)
+set.seed(4321)
+sample = sample.split(data,SplitRatio = 0.75)
+train = subset(data,sample ==TRUE) 
+test = subset(data, sample==FALSE)
+
+describe(train)
+describe(test)
+```
+
+### Standardize 
+Standardize and scale data so that the mean is 0 and std is 1 (comparing measurements with different units)
+Important to scale data after splitting train/test 
+```{r}
+train$anger_scaled<-scale(train$anger)
+train$anxiety_scaled<-scale(train$anxiety)
+train$ideology_scaled<-scale(train$ideology)
+train$gender_scaled<-scale(train$gender)
+train$age_scaled<-scale(train$age)
+train$educ_scaled<-scale(train$educ)
+train$income_scaled<-scale(train$income)
+train$region_scaled<-scale(train$region)
+train$st_scaled<-scale(train$st)
+train$ss_scaled<-scale(train$ss)
+
+train = subset(train, select = -c(anger, anxiety,ideology, gender, age, educ, income, region, st, ss))
+describe(train)
+
+test$anger_scaled<-scale(test$anger)
+test$anxiety_scaled<-scale(test$anxiety)
+test$ideology_scaled<-scale(test$ideology)
+test$gender_scaled<-scale(test$gender)
+test$age_scaled<-scale(test$age)
+test$educ_scaled<-scale(test$educ)
+test$income_scaled<-scale(test$income)
+test$region_scaled<-scale(test$region)
+test$st_scaled<-scale(test$st)
+test$ss_scaled<-scale(test$ss)
+
+test = subset(test, select = -c(anger, anxiety,ideology, gender, age, educ, income, region, st, ss))
+describe(test)
+```
+
+### PCA
+Principle Component Analysis looks to reduce dimensionality through unsupervised learning \  \  
+The goal is for the model to explain as much variation as possible by transforming a large set of variables into a smaller one that still contains most of the information in the large set 
+```{r}
+train.pca <- prcomp(train[,1:10])
+train.pca
+summary(train.pca)
+```
+
+<br> <br> <br>
+Visualize how each principle component explains model variation
+```{r}
+plot(train.pca)
+biplot(train.pca)
+```
+
+<br> <br> <br>
+Reassess correlations with PCA's 
+```{r}
+library(corrplot)
+cor1 <- cor(train.pca$x, method="pearson")
+corrplot::corrplot(cor1, method= "color", order = "hclust", tl.pos = 'n')
+```
+
+<br> <br> <br>
+Save PCA's as a seperate data frame to use for model building 
+```{r}
+pcs <- as.data.frame(train.pca$x)
+data2 <- cbind(train, pcs)
+data2 <- subset(data2, select = -c(anger_scaled, anxiety_scaled, ideology_scaled, gender_scaled, age_scaled, educ_scaled,
+                                   income_scaled, region_scaled, st_scaled))
+data2
+```
+
+
+<br> <br> <br>
+Opitmal PCA's is 3   
+Run a regression model using the first 3 PCA's 
+```{r}
+lmodel <- lm(ss_scaled ~ PC1 + PC2 + PC3, data = data2)
+summary(lmodel)
+```
+
+### Least Squares Model
+Compare to a simple least squares regression
+```{r}
+lmod <- lm(ss_scaled ~ ., data = train)
+summary(lmod)
+```
+
+<br> <br> <br>
+Use forward selection to find most significant features in training dataset
+```{r}
+library(MASS)
+library(olsrr)
+model <- lm(ss_scaled ~ ., data = train)
+k <- ols_step_forward_p(model)
+ols_step_forward_p(model)
+plot(k)
+```
+
+<br> <br> <br>
+Repeat for stepwise selection 
+```{r}
+k2 <- ols_step_both_p(model)
+ols_step_both_p(model)
+plot(k2)
+summary(k2)
+```
+
+<br> <br> <br>
+View all possible models 
+```{r}
+library(olsrr)
+k3 <- ols_step_all_possible(model)
+k3
+plot(k3)
+```
+
+<br> <br> <br>
+Using these variable selection methods, formally write out each model to compare model accuracy 
+```{r}
+#pcr
+lmodpcr <- lm(train$ss_scaled ~ train.pca$x[,1:3])
+#simple 
+lmod <- lm(ss_scaled ~ ., data = train)
+#forward 
+forward <- lm(ss_scaled ~ region_scaled + educ_scaled + ideology_scaled + gender_scaled, data = train)
+#stepwise 
+stepwise <- lm(ss_scaled ~ st_scaled + region_scaled, data = train)
+```
+
+### Cross Validation
+Perform cross validation on these 4 models 
+```{r}
+library(caret)
+
+set.seed(13245)
+train.control <- trainControl(method = "repeatedcv", number = 10,repeats=20)
+model_leastsquares <- train(ss_scaled ~ ., data = train, method = "lm",
+                       trControl = train.control)
+model_pcr <- train(ss_scaled ~ PC1 + PC2 + PC3, data = data2, method = "lm",
+                   trControl = train.control)
+model_forward <- train(ss_scaled ~ region_scaled + educ_scaled + ideology_scaled + gender_scaled, data = train, method = "lm",
+                       trControl = train.control)
+model_stepwise <- train(ss_scaled ~ st_scaled + region_scaled, data = train, method = "lm",
+                        trControl = train.control)
+
+print(model_leastsquares)
+print(model_pcr)
+print(model_forward)
+print(model_stepwise)
+
+```
+
+### Validate 
+
+Set up PCA validation 
+```{r}
+testpca <- cbind(data2[1:154,])
+testpca
+
+
+PC1 <- train.pca$rotation[,1]
+PC2<- train.pca$rotation[,2]
+PC3<- train.pca$rotation[,3]
+View(testpca)
+```
+
+Validate models on test data set
+```{r}
+model_leastsquares_test <- train(ss_scaled ~ ., data = test, method = "lm", trControl = train.control)
+model_PCA_test <- model_pcr_test <- train(ss_scaled ~ PC1 + PC2 + PC3, data = testpca,
+                        method = "lm",
+                        trControl = train.control)
+
+model_forward_test <- train(ss_scaled ~ region_scaled + educ_scaled + ideology_scaled + gender_scaled, data = test, method =                          "lm", trControl = train.control)
+
+model_stepwise_test <- train(ss_scaled ~ st_scaled + region_scaled, data = test, method = "lm",
+                        trControl = train.control)
+
+model_leastsquares_test
+model_PCA_test
+model_forward_test
+model_stepwise_test
+
+
+```
+
